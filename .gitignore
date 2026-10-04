@@ -1,0 +1,9 @@
+bin/
+obj/
+plugin_telematic_cfg.yml
+plugin-credentials.json
+*.log
+.vs/
+TestResults/
+*.user
+*.suo

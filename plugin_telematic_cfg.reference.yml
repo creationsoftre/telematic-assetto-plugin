@@ -1,0 +1,15 @@
+---
+!<telematic_cfg>
+# The plugin is opt-in. Keep disabled until the local Supervisor endpoint and token are provisioned.
+Enabled: false
+InstanceId: assetto-server-1
+SupervisorUrl: ws://127.0.0.1:9780/game
+PluginToken: ""
+HeartbeatSeconds: 15
+MaxPendingDurableMessages: 256
+
+# Sampled telemetry is opt-in. Supported sample rates are 1-5 Hz.
+Telemetry:
+  Enabled: false
+  SampleRateHz: 2
+  StaleSeconds: 5
