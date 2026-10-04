@@ -1,8 +1,11 @@
 # Plugin development
 
 The project is a .NET 11 class library loaded by AssettoServer. Project
-references follow the upstream `Plugin.props` pattern and are expected to point
-at sibling `AssettoServer` and `AssettoServer.Shared` checkouts.
+references follow the upstream `Plugin.props` pattern and expect an
+`AssettoServer` source checkout beside this repository, containing both
+`AssettoServer/AssettoServer.csproj` and
+`AssettoServer.Shared/AssettoServer.Shared.csproj`. If the checkout is
+elsewhere, pass `-p:AssettoServerSourceRoot=<checkout path>` to `dotnet build`.
 
 Build and test with the SDK used by the target server. The current integration
 was validated against AssettoServer commit

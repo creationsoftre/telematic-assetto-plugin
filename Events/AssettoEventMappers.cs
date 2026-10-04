@@ -21,10 +21,10 @@ public static class AssettoEventMappers
 
     public static string SessionType(SessionType native) => native switch
     {
-        AssettoServer.Shared.Model.SessionType.Booking => "custom",
-        AssettoServer.Shared.Model.SessionType.Practice => "practice",
-        AssettoServer.Shared.Model.SessionType.Qualifying => "qualifying",
-        AssettoServer.Shared.Model.SessionType.Race => "race",
+        global::AssettoServer.Shared.Model.SessionType.Booking => "custom",
+        global::AssettoServer.Shared.Model.SessionType.Practice => "practice",
+        global::AssettoServer.Shared.Model.SessionType.Qualifying => "qualifying",
+        global::AssettoServer.Shared.Model.SessionType.Race => "race",
         _ => "unknown"
     };
 
@@ -36,7 +36,7 @@ public static class AssettoEventMappers
 
     public static LapEventPayload Lap(ACTcpClient client, SessionState state, ACServerConfiguration configuration, string sessionId, LapCompletedOutgoing packet, IReadOnlyList<long>? sectors)
     {
-        var number = state.Results?.TryGetValue(client.SessionId, out var result) == true ? result.NumLaps : null;
+        uint? number = state.Results?.TryGetValue(client.SessionId, out var result) == true ? result.NumLaps : null;
         return new LapEventPayload(Guid.NewGuid().ToString("N"), sessionId, Driver(client, configuration.Extra.UseSteamAuth), configuration.Server.Track, configuration.Server.TrackConfig, packet.LapTime, number, packet.Cuts, "unknown", sectors, client.EntryCar.Status.CurrentTyreCompound, DateTimeOffset.UtcNow.ToString("O"), new Dictionary<string, object?> { ["validitySource"] = "assetto_server_cuts_preserved" });
     }
 }

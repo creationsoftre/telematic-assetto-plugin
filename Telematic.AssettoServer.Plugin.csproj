@@ -11,13 +11,15 @@
     <RootNamespace>Telematic.AssettoServer.Plugin</RootNamespace>
     <AssemblyName>Telematic.AssettoServer.Plugin</AssemblyName>
     <PathMap>$(MSBuildProjectDirectory)=Telematic.AssettoServer.Plugin</PathMap>
+    <AssettoServerSourceRoot Condition="'$(AssettoServerSourceRoot)' == ''">..\AssettoServer</AssettoServerSourceRoot>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\AssettoServer\AssettoServer.csproj">
+    <Compile Remove="tests\**\*.cs" />
+    <ProjectReference Include="$(AssettoServerSourceRoot)\AssettoServer\AssettoServer.csproj">
       <Private>false</Private>
       <ExcludeAssets>runtime;native</ExcludeAssets>
     </ProjectReference>
-    <ProjectReference Include="..\AssettoServer\AssettoServer.Shared\AssettoServer.Shared.csproj">
+    <ProjectReference Include="$(AssettoServerSourceRoot)\AssettoServer.Shared\AssettoServer.Shared.csproj">
       <Private>false</Private>
       <ExcludeAssets>runtime;native</ExcludeAssets>
     </ProjectReference>

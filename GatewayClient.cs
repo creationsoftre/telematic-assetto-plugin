@@ -120,7 +120,7 @@ public sealed class TelematicGatewayClient
         DiscardPendingTelemetrySnapshots();
         await _transport.ConnectAsync(new Uri(_configuration.SupervisorUrl), _configuration.PluginToken, cancellationToken);
         var capabilities = Capabilities();
-        await SendAsync("connection.hello", TelematicProtocol.Ephemeral, new ConnectionHello([TelematicProtocol.Version], "0.1.0", "ASSETTOSERVER_NATIVE", "ASSETTO_CORSA", capabilities), cancellationToken);
+        await SendAsync("connection.hello", TelematicProtocol.Ephemeral, new ConnectionHello([TelematicProtocol.Version], "Telematic.AssettoServer.Plugin", "0.1.0", "ASSETTO_CORSA", "ASSETTOSERVER_NATIVE", capabilities), cancellationToken);
         var first = await _transport.ReceiveAsync(cancellationToken) ?? throw new IOException("Gateway closed during handshake.");
         var accepted = JsonSerializer.Deserialize<GatewayEnvelope>(first, TelematicProtocol.JsonOptions);
         if (accepted is null || accepted.MessageType != "connection.accepted") throw new InvalidOperationException("Gateway rejected the connection handshake.");

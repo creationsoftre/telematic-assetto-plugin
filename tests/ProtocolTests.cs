@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AssettoServer.Shared.Model;
+using Xunit;
 
 namespace Telematic.AssettoServer.Plugin.Tests;
 
