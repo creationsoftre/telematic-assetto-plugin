@@ -22,6 +22,8 @@ public readonly record struct CachedVehicleState(
 public sealed class VehicleStateCache
 {
     private readonly ConcurrentDictionary<byte, CachedVehicleState> _states = new();
+    private readonly ConcurrentDictionary<byte, ACTcpClient> _owners = new();
+    private readonly ConcurrentDictionary<byte, object> _slotGates = new();
     private readonly ACServerConfiguration _configuration;
     private long _updates;
     private long _invalidSamples;
@@ -34,40 +36,66 @@ public sealed class VehicleStateCache
 
     public void Attach(ACTcpClient client)
     {
-        _states[client.SessionId] = new CachedVehicleState(AssettoEventMappers.Driver(client, _configuration.Extra.UseSteamAuth), null, null, null, 0, 0, 0, 127, 0, false, false);
+        var slot = client.SessionId;
+        lock (Gate(slot))
+        {
+            _owners[slot] = client;
+            _states[slot] = new CachedVehicleState(AssettoEventMappers.Driver(client, _configuration.Extra.UseSteamAuth), null, null, null, 0, 0, 0, 127, 0, false, false);
+        }
     }
 
-    public void Remove(byte sessionId) => _states.TryRemove(sessionId, out _);
+    public void Remove(ACTcpClient client)
+    {
+        var slot = client.SessionId;
+        lock (Gate(slot))
+        {
+            if (!_owners.TryGetValue(slot, out var owner) || !ReferenceEquals(owner, client)) return;
+            _owners.TryRemove(slot, out _);
+            _states.TryRemove(slot, out _);
+        }
+    }
 
     public void ClearSamples()
     {
-        foreach (var pair in _states.ToArray())
-            _states[pair.Key] = pair.Value with { Position = null, Velocity = null, NormalizedPosition = null, HasSample = false, InvalidNumericSample = false };
+        foreach (var slot in _states.Keys.ToArray())
+        {
+            lock (Gate(slot))
+            {
+                if (_states.TryGetValue(slot, out var state))
+                    _states[slot] = state with { Position = null, Velocity = null, NormalizedPosition = null, HasSample = false, InvalidNumericSample = false };
+            }
+        }
     }
 
-    public void Update(EntryCar car, in PositionUpdateIn update)
+    public void Update(ACTcpClient client, EntryCar car, in PositionUpdateIn update)
     {
         Interlocked.Increment(ref _updates);
-        if (!_states.TryGetValue(car.SessionId, out var previous)) return;
+        var slot = client.SessionId;
+        lock (Gate(slot))
+        {
+            if (car.SessionId != slot || !ReferenceEquals(car.Client, client)
+                || !_owners.TryGetValue(slot, out var owner) || !ReferenceEquals(owner, client)
+                || !_states.TryGetValue(slot, out var previous)) return;
 
-        var positionValid = IsFinite(update.Position) && update.Position.Length() <= 100_000f;
-        var velocityValid = IsFinite(update.Velocity) && update.Velocity.Length() <= 500f;
-        var normalizedValid = float.IsFinite(update.NormalizedPosition) && update.NormalizedPosition >= 0f && update.NormalizedPosition <= 1f;
-        var invalid = !positionValid || !velocityValid || !normalizedValid;
-        if (invalid) Interlocked.Increment(ref _invalidSamples);
+            var positionValid = IsFinite(update.Position) && update.Position.Length() <= 100_000f;
+            var velocityValid = IsFinite(update.Velocity) && update.Velocity.Length() <= 500f;
+            var normalizedValid = float.IsFinite(update.NormalizedPosition) && update.NormalizedPosition >= 0f && update.NormalizedPosition <= 1f;
+            var invalid = !positionValid || !velocityValid || !normalizedValid;
+            if (invalid) Interlocked.Increment(ref _invalidSamples);
 
-        _states[car.SessionId] = new CachedVehicleState(
-            previous.Driver,
-            positionValid ? ToVector(update.Position) : null,
-            velocityValid ? ToVector(update.Velocity) : null,
-            normalizedValid ? update.NormalizedPosition : null,
-            update.EngineRpm,
-            update.Gear,
-            update.Gas,
-            update.SteerAngle,
-            DateTime.UtcNow.Ticks,
-            invalid,
-            true);
+            _states[slot] = new CachedVehicleState(
+                previous.Driver,
+                positionValid ? ToVector(update.Position) : null,
+                velocityValid ? ToVector(update.Velocity) : null,
+                normalizedValid ? update.NormalizedPosition : null,
+                update.EngineRpm,
+                update.Gear,
+                update.Gas,
+                update.SteerAngle,
+                DateTime.UtcNow.Ticks,
+                invalid,
+                true);
+        }
     }
 
     public CachedVehicleState[] FreshStates(DateTime now, TimeSpan staleAfter)
@@ -80,4 +108,6 @@ public sealed class VehicleStateCache
         => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
 
     private static TelemetryVector ToVector(System.Numerics.Vector3 value) => new(value.X, value.Y, value.Z);
+
+    private object Gate(byte slot) => _slotGates.GetOrAdd(slot, static _ => new object());
 }

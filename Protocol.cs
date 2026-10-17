@@ -3,14 +3,18 @@ using System.Text.Json.Serialization;
 
 namespace Telematic.AssettoServer.Plugin;
 
+public sealed record NativeGeneration(string Lineage, long Ordinal);
+
 public static class TelematicProtocol
 {
     public const int Version = 1;
+    public const int DurableAckVersion = 2;
     public const string Durable = "durable";
     public const string Ephemeral = "ephemeral";
     public const string CapabilityChatBroadcast = "chat.broadcast";
     public const string CapabilityPlayersRead = "players.read";
     public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+    public static string UtcTimestamp() => DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'");
 }
 
 public sealed record GatewayEnvelope(
@@ -31,15 +35,17 @@ public sealed record ConnectionHello(
     [property: JsonPropertyName("game")] string Game,
     [property: JsonPropertyName("adapter")] string Adapter,
     [property: JsonPropertyName("capabilities")] IReadOnlyList<string> Capabilities,
-    [property: JsonPropertyName("gameServerVersion")] string? GameServerVersion = null);
+    [property: JsonPropertyName("gameServerVersion")] string? GameServerVersion = null,
+    [property: JsonPropertyName("supportedDurableAckVersions")] IReadOnlyList<int>? SupportedDurableAckVersions = null);
 
 public sealed record ConnectionAccepted(
     [property: JsonPropertyName("connectionId")] string ConnectionId,
-    [property: JsonPropertyName("serverTime")] DateTimeOffset? ServerTime = null);
+    [property: JsonPropertyName("serverTime")] DateTimeOffset? ServerTime = null,
+    [property: JsonPropertyName("durableAckVersion")] int DurableAckVersion = 0,
+    [property: JsonPropertyName("protocolVersion")] int ProtocolVersion = 0);
 
 public sealed record ConnectionRejected(
-    [property: JsonPropertyName("code")] string Code,
-    [property: JsonPropertyName("message")] string Message);
+    [property: JsonPropertyName("error")] ProtocolError Error);
 
 public sealed record InstanceRegister(
     [property: JsonPropertyName("game")] string Game,

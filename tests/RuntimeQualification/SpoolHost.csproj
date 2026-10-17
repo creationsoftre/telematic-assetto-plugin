@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <!-- Source-component qualification only: NOT an AssettoServer plugin host.
+       Use the existing trusted build output; no new package/download required. -->
+  <ItemGroup>
+    <Compile Include="..\..\DurableSpool.cs" Link="DurableSpool.cs" />
+    <Compile Include="..\..\DurableEventValidation.cs" Link="DurableEventValidation.cs" />
+    <Compile Include="..\..\Protocol.cs" Link="Protocol.cs" />
+    <Compile Include="..\..\GatewayClient.cs" Link="GatewayClient.cs" />
+    <Compile Include="..\..\CommandSafety.cs" Link="CommandSafety.cs" />
+    <Compile Include="..\..\NativeTransportPolicy.cs" Link="NativeTransportPolicy.cs" />
+    <Reference Include="Serilog"><HintPath>..\bin\Release\net8.0\Serilog.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

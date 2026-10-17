@@ -1,13 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net11.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AssettoServerSourceRoot Condition="'$(AssettoServerSourceRoot)' == ''">..\..\AssettoServer</AssettoServerSourceRoot>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="RuntimeQualification\**\*.cs" />
     <ProjectReference Include="..\Telematic.AssettoServer.Plugin.csproj" />
+    <!-- Production supplies these dependencies through AssettoServer; tests need their own host graph. -->
+    <ProjectReference Include="$(AssettoServerSourceRoot)\AssettoServer\AssettoServer.csproj" />
+    <ProjectReference Include="$(AssettoServerSourceRoot)\AssettoServer.Shared\AssettoServer.Shared.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />

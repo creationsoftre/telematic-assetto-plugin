@@ -29,7 +29,7 @@ public sealed class TelemetrySampler : BackgroundService
         if (states.Length == 0 && !force && Interlocked.Exchange(ref _hadPlayers, 0) == 0) return;
         Interlocked.Exchange(ref _hadPlayers, states.Length > 0 ? 1 : 0);
         var players = states.Select(Map).ToArray();
-        var payload = new TelemetrySnapshotPayload(DateTimeOffset.UtcNow.ToString("O"), players, _events.CurrentSessionId);
+        var payload = new TelemetrySnapshotPayload(TelematicProtocol.UtcTimestamp(), players, _events.CurrentSessionId);
         if (!_gateway.TryQueueTelemetrySnapshot(payload)) Log.Warning("Telematic telemetry snapshot coalesced or dropped");
     }
 

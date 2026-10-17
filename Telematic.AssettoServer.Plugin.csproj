@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net11.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <EnableDynamicLoading>true</EnableDynamicLoading>
@@ -9,7 +9,7 @@
     <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <RootNamespace>Telematic.AssettoServer.Plugin</RootNamespace>
-    <AssemblyName>Telematic.AssettoServer.Plugin</AssemblyName>
+    <AssemblyName>TelematicPlugin</AssemblyName>
     <PathMap>$(MSBuildProjectDirectory)=Telematic.AssettoServer.Plugin</PathMap>
     <AssettoServerSourceRoot Condition="'$(AssettoServerSourceRoot)' == ''">..\AssettoServer</AssettoServerSourceRoot>
   </PropertyGroup>

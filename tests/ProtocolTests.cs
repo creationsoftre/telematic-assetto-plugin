@@ -7,6 +7,21 @@ namespace Telematic.AssettoServer.Plugin.Tests;
 public sealed class ProtocolTests
 {
     [Fact]
+    public void DefaultLayoutLapMatchesWebContract()
+    {
+        var lap = new LapEventPayload("event", "session", new DriverReference("Driver", "76561198000000000", "4", "car"), "ks_laguna_seca", AssettoEventMappers.LayoutKey(""), 100307, null, 0, AssettoEventMappers.LapValidity, null, null, "2026-10-05T17:28:35Z");
+        var json = JsonSerializer.Serialize(lap, TelematicProtocol.JsonOptions);
+        Assert.Contains("\"validity\":\"UNKNOWN\"", json);
+        Assert.DoesNotContain("\"layoutKey\"", json);
+        Assert.Equal("tourist", AssettoEventMappers.LayoutKey("tourist"));
+    }
+    [Fact]
+    public void PluginAssemblyNameMatchesV0054LoaderDirectory()
+    {
+        Assert.Equal("TelematicPlugin", typeof(TelematicConfiguration).Assembly.GetName().Name);
+    }
+
+    [Fact]
     public void EnvelopeUsesSupervisorV1FieldNames()
     {
         var now = DateTimeOffset.UtcNow;

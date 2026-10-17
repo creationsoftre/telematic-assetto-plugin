@@ -1,12 +1,25 @@
 ---
-!<telematic_cfg>
+!TelematicConfiguration
 # The plugin is opt-in. Keep disabled until the local Supervisor endpoint and token are provisioned.
 Enabled: false
 InstanceId: assetto-server-1
 SupervisorUrl: ws://127.0.0.1:9780/game
 PluginToken: ""
+# Separate credential for direct-loopback HTTP diagnostics. Empty disables access.
+# Send in X-Telematic-Diagnostics-Token, never a URL; do not reuse PluginToken.
+DiagnosticsToken: ""
 HeartbeatSeconds: 15
 MaxPendingDurableMessages: 256
+
+# Automatically created under this account's LocalApplicationData/Telematic/plugin-state.
+# RootDirectory, if set, MUST be absolute. InstanceId selects an isolated SHA-256 subdirectory.
+Spool:
+  MaxBytes: 104857600 # 100 MiB; supported upper bound 1 GiB
+  MaxRecords: 20000 # pending + rejected + quarantined; upper bound 100000
+ConnectTimeoutSeconds: 15
+WriteTimeoutSeconds: 10
+AckTimeoutSeconds: 30
+RetryDelaySeconds: 2
 
 # Sampled telemetry is opt-in. Supported sample rates are 1-5 Hz.
 Telemetry:

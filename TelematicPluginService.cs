@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AssettoServer.Server;
+using AssettoServer.Shared.Network.Packets.Shared;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 
@@ -26,18 +27,26 @@ public sealed class TelematicPluginService : BackgroundService
         await _gateway.RunAsync(stoppingToken);
     }
 
-    public Task<CommandResult> HandleCommandAsync(CommandRequest request, CancellationToken cancellationToken)
+    private Task<CommandResult> HandleCommandAsync(CommandRequest request, CancellationToken cancellationToken)
     {
+        var invalid = !_configuration.Enabled || !_gateway.Diagnostics().Connected ? "COMMAND_NOT_AUTHORIZED" : CommandSafety.Validate(request, _configuration.InstanceId, DateTimeOffset.UtcNow);
+        if (invalid is not null) return Task.FromResult(new CommandResult(request.CommandId, _configuration.InstanceId, "rejected", DateTimeOffset.UtcNow, new ProtocolError(invalid, "Command not dispatched")));
         if (request.CommandType == TelematicProtocol.CapabilityChatBroadcast)
         {
             if (!request.Parameters.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(message.GetString()))
                 return Task.FromResult(new CommandResult(request.CommandId, _configuration.InstanceId, "rejected", DateTimeOffset.UtcNow, new ProtocolError("INVALID_ARGUMENT", "message is required")));
-            _entryCarManager.BroadcastChat(message.GetString()!);
+            _entryCarManager.BroadcastPacket(new ChatMessage { SessionId = 255, Message = message.GetString()! });
             return Task.FromResult(new CommandResult(request.CommandId, _configuration.InstanceId, "succeeded", DateTimeOffset.UtcNow));
         }
         return Task.FromResult(new CommandResult(request.CommandId, _configuration.InstanceId, "unsupported", DateTimeOffset.UtcNow, new ProtocolError("UNSUPPORTED_COMMAND", $"Unsupported command: {request.CommandType}")));
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
-    { _events.Stop(); await _transport.CloseAsync(cancellationToken); await _transport.DisposeAsync(); await base.StopAsync(cancellationToken); }
+    {
+        _events.Stop();
+        await base.StopAsync(cancellationToken);
+        await _transport.CloseAsync(cancellationToken);
+        await _transport.DisposeAsync();
+        _gateway.Dispose();
+    }
 }

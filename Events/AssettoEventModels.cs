@@ -20,16 +20,17 @@ public sealed record SessionEventPayload(
     string SessionType,
     string NativeType,
     string TrackKey,
-    string LayoutKey,
+    string? LayoutKey,
     string StartedAt,
-    IReadOnlyDictionary<string, object?>? GameMetadata = null);
+    IReadOnlyDictionary<string, object?>? GameMetadata = null,
+    NativeGeneration? Generation = null);
 
 public sealed record LapEventPayload(
     string EventId,
     string SessionId,
     DriverReference Driver,
     string TrackKey,
-    string LayoutKey,
+    string? LayoutKey,
     long LapTimeMs,
     uint? LapNumber,
     byte Cuts,

@@ -19,16 +19,33 @@ public sealed class TelematicConfiguration
     [YamlMember(Description = "Token provisioned by the local Telematic Supervisor.")]
     public string PluginToken { get; init; } = "";
 
+    [YamlMember(Description = "Separate local diagnostics header credential (at least 32 characters). Empty disables diagnostics; never reuse PluginToken.")]
+    public string DiagnosticsToken { get; init; } = "";
+
     [YamlMember(Description = "Gateway heartbeat interval in seconds.")]
     public int HeartbeatSeconds { get; init; } = 15;
 
     [YamlMember(Description = "Maximum in-memory durable messages awaiting acknowledgement.")]
     public int MaxPendingDurableMessages { get; init; } = 256;
 
+    public SpoolConfiguration Spool { get; init; } = new();
+    public int ConnectTimeoutSeconds { get; init; } = 15;
+    public int WriteTimeoutSeconds { get; init; } = 10;
+    public int AckTimeoutSeconds { get; init; } = 30;
+    public int RetryDelaySeconds { get; init; } = 2;
+
     [YamlMember(Description = "Sampled live vehicle telemetry settings.")]
     public TelemetryConfiguration Telemetry { get; init; } = new();
 
-    public override string ToString() => $"Enabled={Enabled}, InstanceId={InstanceId}, SupervisorUrl={SupervisorUrl}, PluginToken=<redacted>";
+    public override string ToString() => $"Enabled={Enabled}, InstanceId={InstanceId}, SupervisorUrl=<redacted>, PluginToken=<redacted>, DiagnosticsToken=<redacted>";
+}
+
+public sealed class SpoolConfiguration
+{
+    // Null selects the current service account's application-data directory.
+    public string? RootDirectory { get; init; }
+    public long MaxBytes { get; init; } = 100L * 1024 * 1024;
+    public int MaxRecords { get; init; } = 20_000;
 }
 
 public sealed class TelemetryConfiguration
