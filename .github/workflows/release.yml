@@ -10,8 +10,13 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: plugin
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: plugin
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
@@ -20,10 +25,11 @@ jobs:
           repository: compujuckel/AssettoServer
           ref: 51737e2c2ee892bc7800df479517eaaf38a828fc
           path: upstream
+          fetch-depth: 0
       - name: Test and build
         shell: pwsh
         run: |
-          $source = Join-Path $PWD upstream
+          $source = Join-Path (Split-Path $PWD -Parent) upstream
           dotnet test tests/Telematic.AssettoServer.Plugin.Tests.csproj -c Release "-p:AssettoServerSourceRoot=$source" -p:NO_SINGLE_FILE=1
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           dotnet build Telematic.AssettoServer.Plugin.csproj -c Release "-p:AssettoServerSourceRoot=$source" -p:NO_SINGLE_FILE=1 "-p:SourceRevisionId=$env:GITHUB_SHA"
