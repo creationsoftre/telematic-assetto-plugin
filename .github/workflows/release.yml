@@ -1,0 +1,43 @@
+name: Publish native plugin prerelease
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Versioned prerelease tag
+        required: true
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/checkout@v4
+        with:
+          repository: compujuckel/AssettoServer
+          ref: 51737e2c2ee892bc7800df479517eaaf38a828fc
+          path: upstream
+      - name: Test and build
+        shell: pwsh
+        run: |
+          $source = Join-Path $PWD upstream
+          dotnet test tests/Telematic.AssettoServer.Plugin.Tests.csproj -c Release "-p:AssettoServerSourceRoot=$source" -p:NO_SINGLE_FILE=1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet build Telematic.AssettoServer.Plugin.csproj -c Release "-p:AssettoServerSourceRoot=$source" -p:NO_SINGLE_FILE=1 "-p:SourceRevisionId=$env:GITHUB_SHA"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Package
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: ./scripts/package-release.ps1 -Version $env:RELEASE_VERSION -OutputDirectory "$env:RUNNER_TEMP/plugin-release"
+      - name: Publish unsigned test prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          gh release create $env:RELEASE_VERSION --target $env:GITHUB_SHA --prerelease --title "AssettoServer plugin $env:RELEASE_VERSION" --notes "Unsigned test prerelease for AssettoServer 0.0.54 (.NET 8). See INSTALL.md and BUILD.json. Production acceptance is not implied." "$env:RUNNER_TEMP/plugin-release/telematic-assettoserver-plugin-windows.zip" "$env:RUNNER_TEMP/plugin-release/checksums.sha256"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
