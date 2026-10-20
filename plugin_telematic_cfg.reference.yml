@@ -1,9 +1,16 @@
+# Append this as a separate YAML document in cfg/extra_cfg.yml; retain the first
+# document and its EnablePlugins list. AssettoServer 0.0.54 does not load this
+# reference filename as an independent runtime configuration.
 ---
 !TelematicConfiguration
 # The plugin is opt-in. Keep disabled until the local Supervisor endpoint and token are provisioned.
 Enabled: false
+# Stable enrolled Supervisor instance ID, not a display name. Preserve it and
+# its spool across upgrades; renaming it is not a routine configuration refresh.
 InstanceId: assetto-server-1
+# Local WebSocket plugin gateway, NOT the Supervisor HTTP dashboard/API port.
 SupervisorUrl: ws://127.0.0.1:9780/game
+# Dedicated plugin credential; do not reuse cloud or local-control credentials.
 PluginToken: ""
 # Separate credential for direct-loopback HTTP diagnostics. Empty disables access.
 # Send in X-Telematic-Diagnostics-Token, never a URL; do not reuse PluginToken.
@@ -21,7 +28,8 @@ WriteTimeoutSeconds: 10
 AckTimeoutSeconds: 30
 RetryDelaySeconds: 2
 
-# Sampled telemetry is opt-in. Supported sample rates are 1-5 Hz.
+# Sampled live telemetry is opt-in. Disabling samples does not disable durable
+# lap/session/incident delivery. Supported sample rates are 1-5 Hz.
 Telemetry:
   Enabled: false
   SampleRateHz: 2
