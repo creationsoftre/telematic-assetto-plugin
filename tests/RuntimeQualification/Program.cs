@@ -47,15 +47,17 @@ if (args.Length == 3 && args[0] == "child")
     }
     Check(spool.TryPersist(Frame(), out _), "capture refused");
     if (boundary == "persisted") Pause();
-    if (boundary is "before-retire" or "after-retire") spool.Retire("stable-lap");
+    if (boundary is "before-retire" or "after-retire" or "archive-before-settle" or "archive-settle-after-flush" or "archive-settle-after-rename") spool.Retire("stable-lap");
     throw new InvalidOperationException("checkpoint not reached");
 }
 var generationOnly = args.Length == 2 && args[1] == "generation";
-Check((args.Length == 1 || generationOnly) && Path.IsPathFullyQualified(args[0]), "explicit isolated root required");
+var archiveOnly = args.Length == 2 && args[1] == "archive";
+Check((args.Length == 1 || generationOnly || archiveOnly) && Path.IsPathFullyQualified(args[0]), "explicit isolated root required");
 Check(Environment.Version.Major == 8, "base .NET 8 required; no runtime roll-forward");
 Directory.CreateDirectory(args[0]);
 foreach (var boundary in generationOnly
     ? new[] { "generation-before-write", "generation-after-flush", "generation-after-commit" }
+    : archiveOnly ? new[] { "archive-after-flush", "archive-after-rename", "archive-before-settle", "archive-settle-after-flush", "archive-settle-after-rename" }
     : new[] { "after-flush", "after-rename", "persisted", "before-retire", "after-retire" })
 {
     var root = Path.Combine(args[0], boundary);
@@ -90,6 +92,7 @@ foreach (var boundary in generationOnly
             continue;
         }
         var eligible = recovered.Eligible(new HashSet<string>(), 10);
+        Check(recovered.Diagnostics().ArchivedLaps == 1, "completed observation archive lost after kill");
         Check(eligible.Count == (boundary == "after-retire" ? 0 : 1), "unexpected recovered record count");
         if (eligible.Count > 0)
         {
@@ -97,6 +100,7 @@ foreach (var boundary in generationOnly
             Check(recovered.TryPersist(Frame(), out _) && recovered.Diagnostics().Pending == 1, "replay duplicated");
             Check(recovered.Retire("stable-lap") && !recovered.Retire("stable-lap"), "retirement not idempotent");
         }
+        Check(Directory.GetFiles(recovered.ArchiveRoot, "*.json").Length == 1, "retirement deleted archive");
         Console.WriteLine($"PASS actual process kill/reopen {boundary}");
     }
     finally { if (!child.HasExited) { child.Kill(); child.WaitForExit(5000); } }

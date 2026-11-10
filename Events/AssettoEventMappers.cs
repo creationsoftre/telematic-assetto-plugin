@@ -41,9 +41,9 @@ public static class AssettoEventMappers
         return new SessionEventPayload(eventId, sessionId, SessionType(state.Configuration.Type), native, configuration.Server.Track, LayoutKey(configuration.Server.TrackConfig), TelematicProtocol.UtcTimestamp(), new Dictionary<string, object?> { ["nativeSessionName"] = state.Configuration.Name, ["nativeSessionId"] = state.Configuration.Id });
     }
 
-    public static LapEventPayload Lap(ACTcpClient client, SessionState state, ACServerConfiguration configuration, string sessionId, LapCompletedOutgoing packet, IReadOnlyList<long>? sectors)
+    public static LapEventPayload Lap(ACTcpClient client, SessionState? state, ACServerConfiguration configuration, string? sessionId, LapCompletedOutgoing packet, IReadOnlyList<long>? sectors)
     {
-        uint? number = state.Results?.TryGetValue(client.SessionId, out var result) == true ? result.NumLaps : null;
-        return new LapEventPayload(Guid.NewGuid().ToString("N"), sessionId, Driver(client, configuration.Extra.UseSteamAuth), configuration.Server.Track, LayoutKey(configuration.Server.TrackConfig), packet.LapTime, number > 0 ? number : null, packet.Cuts, LapValidity, sectors, client.EntryCar.Status.CurrentTyreCompound, TelematicProtocol.UtcTimestamp(), new Dictionary<string, object?> { ["validitySource"] = "assetto_server_cuts_preserved" });
+        uint? number = state?.Results?.TryGetValue(client.SessionId, out var result) == true ? result.NumLaps : null;
+        return new LapEventPayload(Guid.NewGuid().ToString("N"), sessionId, Driver(client, configuration.Extra.UseSteamAuth), configuration.Server.Track, LayoutKey(configuration.Server.TrackConfig), packet.LapTime, number > 0 ? number : null, packet.Cuts, LapValidity, sectors, client.EntryCar?.Status?.CurrentTyreCompound, TelematicProtocol.UtcTimestamp(), new Dictionary<string, object?> { ["validitySource"] = "assetto_server_cuts_preserved" });
     }
 }

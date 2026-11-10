@@ -124,6 +124,32 @@ public sealed class TelematicGatewayClient : IDisposable
             Log.Error("Telematic durable capture failed {DiagnosticCode} {MessageType}", "DURABLE_CAPTURE_REJECTED", DurableEventValidation.IsDurableType(messageType) ? messageType : "unsupported"); return false;
         }
     }
+    public bool TryCaptureCompletedLap(LapEventPayload payload, bool deliveryEligible)
+    {
+        if (!_configuration.Enabled) return false;
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(new GatewayEnvelope(TelematicProtocol.Version,
+                Guid.NewGuid().ToString("N"), "lap.completed", _configuration.InstanceId, now, now,
+                deliveryEligible ? TelematicProtocol.Durable : "local-only",
+                JsonSerializer.SerializeToElement(payload, TelematicProtocol.JsonOptions)), TelematicProtocol.JsonOptions);
+            EnsureSpool();
+            lock (_gate)
+            {
+                if (_spool is not null && _spool.TryArchiveCompletedLap(bytes)
+                    && (!deliveryEligible || _spool.TryPersist(bytes, out _))) return true;
+                _captureFailures++; _lastError = _spool?.Diagnostics().ErrorCode ?? "SPOOL_UNAVAILABLE";
+                return false;
+            }
+        }
+        catch (Exception)
+        {
+            lock (_gate) { _captureFailures++; _lastError = "LAP_CAPTURE_FAILED"; }
+            Log.Error("Telematic completed lap capture failed {DiagnosticCode}", "LAP_CAPTURE_FAILED");
+            return false;
+        }
+    }
     public bool TryQueueEphemeralEvent(string messageType, object payload)
     {
         if (messageType != "players.snapshot") return false;
@@ -292,9 +318,9 @@ public sealed class TelematicGatewayClient : IDisposable
         {
             if (!_pending.ContainsKey(ack.MessageId) || _spool is null) return;
             _lastAcknowledgedMessageId = ack.MessageId; _lastAcknowledgedAccepted = ack.Accepted; _lastAcknowledgedAt = DateTimeOffset.UtcNow;
-            if (ack.Accepted) { if (_spool.Retire(ack.MessageId)) { _accepted++; _lastDurableAckAt = DateTimeOffset.UtcNow; } }
+            if (ack.Accepted) { if (_spool.Retire(ack.MessageId)) { _accepted++; _lastDurableAckAt = DateTimeOffset.UtcNow; } else { _lastError = _spool.Diagnostics().ErrorCode; return; } }
             else if (ack.Error!.Retryable) { _retrying++; _nextDurableAttempt = DateTimeOffset.UtcNow.AddSeconds(_configuration.RetryDelaySeconds); _lastError = "SUPERVISOR_RETRYABLE_REJECTION"; }
-            else { if (_spool.Reject(ack.MessageId, ack.Error.Code)) _rejected++; _lastError = "SUPERVISOR_PERMANENT_REJECTION"; }
+            else { if (_spool.Reject(ack.MessageId, ack.Error.Code)) _rejected++; else { _lastError = _spool.Diagnostics().ErrorCode; return; } _lastError = "SUPERVISOR_PERMANENT_REJECTION"; }
             _pending.Remove(ack.MessageId);
         }
     }

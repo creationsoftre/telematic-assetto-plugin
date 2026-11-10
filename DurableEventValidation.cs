@@ -99,10 +99,36 @@ public static class DurableEventValidation
             if (!p.TryGetProperty("lapTimeMs", out var time) || !time.TryGetInt64(out var ms) || ms < 0)
                 throw new InvalidDataException("INVALID_LAP_TIME");
             if (Required(p, "validity") is not ("VALID" or "INVALID" or "UNKNOWN")) throw new InvalidDataException("INVALID_VALIDITY");
+            if (p.TryGetProperty("recordValidation", out var validation)) ValidateRecordValidation(validation, ms);
             if (p.TryGetProperty("sectorTimesMs", out var sectors) && sectors.ValueKind == JsonValueKind.Array)
                 foreach (var sector in sectors.EnumerateArray())
                     if (!sector.TryGetInt64(out var split) || split < 0) throw new InvalidDataException("INVALID_SECTOR");
         }
+    }
+
+    private static void ValidateRecordValidation(JsonElement value, long durationMs)
+    {
+        if (value.ValueKind != JsonValueKind.Object || Required(value, "policyVersion") != "clean-lap-v1")
+            throw new InvalidDataException("INVALID_RECORD_VALIDATION");
+        var reason = Required(value, "reason");
+        if (reason is not ("ACCEPTED" or "TIMING_CUT" or "COLLISION" or "TELEMETRY_INCOMPLETE" or "IDENTITY_UNBOUND"
+            or "UNSUPPORTED_SOURCE" or "INVALID_DURATION" or "LEGACY_NOT_EVALUATED" or "INVALID_EVIDENCE"))
+            throw new InvalidDataException("INVALID_RECORD_REASON");
+        static bool Boolean(JsonElement item, string name)
+        {
+            if (!item.TryGetProperty(name, out var field) || field.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                throw new InvalidDataException("INVALID_EVIDENCE_BOOLEAN");
+            return field.GetBoolean();
+        }
+        if (!value.TryGetProperty("evidence", out var evidence) || evidence.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("INVALID_EVIDENCE");
+        var model = new CleanLapEvidence(Required(evidence, "source"), Boolean(evidence, "coverageComplete"),
+            Boolean(evidence, "identityMatched"), Boolean(evidence, "timingCut"), Boolean(evidence, "collision"),
+            Required(evidence, "intervalStart"), Required(evidence, "intervalEnd"));
+        var evaluated = CleanLapValidation.Evaluate(durationMs, model);
+        if (Boolean(value, "accepted") != (reason == "ACCEPTED")
+            || (reason is not ("LEGACY_NOT_EVALUATED" or "INVALID_EVIDENCE") && reason != evaluated.Reason))
+            throw new InvalidDataException("INCONSISTENT_RECORD_VALIDATION");
     }
 
     private static void CheckNumbers(JsonElement element)

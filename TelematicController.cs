@@ -28,7 +28,7 @@ public sealed class TelematicController : ControllerBase
         {
             plugin = new { enabled = _configuration.Enabled, instanceId = _configuration.InstanceId, telemetryEnabled = _configuration.Telemetry.Enabled },
             gateway,
-            events = new { events.CompletedLaps, events.LastLapAt },
+            events = new { events.CompletedLaps, events.LastLapAt, events.NativeCleanLapCoverageAvailable, events.NativeCleanLapCoverageGap },
             checkedAt = DateTimeOffset.UtcNow
         });
     }

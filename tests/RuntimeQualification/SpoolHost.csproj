@@ -11,6 +11,8 @@
     <Compile Include="..\..\DurableSpool.cs" Link="DurableSpool.cs" />
     <Compile Include="..\..\DurableEventValidation.cs" Link="DurableEventValidation.cs" />
     <Compile Include="..\..\Protocol.cs" Link="Protocol.cs" />
+    <Compile Include="..\..\Events\AssettoEventModels.cs" Link="AssettoEventModels.cs" />
+    <Compile Include="..\..\Events\CleanLapValidation.cs" Link="CleanLapValidation.cs" />
     <Compile Include="..\..\GatewayClient.cs" Link="GatewayClient.cs" />
     <Compile Include="..\..\CommandSafety.cs" Link="CommandSafety.cs" />
     <Compile Include="..\..\NativeTransportPolicy.cs" Link="NativeTransportPolicy.cs" />

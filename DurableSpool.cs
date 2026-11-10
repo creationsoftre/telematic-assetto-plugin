@@ -9,7 +9,8 @@ namespace Telematic.AssettoServer.Plugin;
 
 public sealed record SpoolEntry(string MessageId, string MessageType, string FileName, long Bytes, DateTimeOffset CreatedAt);
 public sealed record SpoolDiagnostics(int Pending, int Rejected, int Quarantined, long BytesUsed, long CapacityBytes,
-    bool StorageHealthy, string? ErrorCode, DateTimeOffset? OldestPendingAt);
+    bool StorageHealthy, string? ErrorCode, DateTimeOffset? OldestPendingAt,
+    int ArchivedLaps = 0, long ArchiveBytes = 0, string? ArchiveError = null, int ArchivedAwaitingDelivery = 0);
 
 /// <summary>Single-owner, bounded per-record spool. Only metadata is held in RAM.</summary>
 public sealed class DurableSpool : IDisposable
@@ -27,6 +28,12 @@ public sealed class DurableSpool : IDisposable
     private int _rejected, _quarantined, _fileCount;
     private string? _error;
     private bool _needsRecovery;
+    private int _archivedLaps;
+    private long _archiveBytes;
+    private string? _archiveError;
+    private bool _archiveRecoveryFailed;
+    private readonly HashSet<string> _archiveBacklog = new(StringComparer.Ordinal);
+    public string ArchiveRoot => Path.Combine(Root, "completed-laps");
     public string Root { get; }
 
     public DurableSpool(string instanceId, SpoolConfiguration configuration, Action<string>? fault = null)
@@ -42,18 +49,19 @@ public sealed class DurableSpool : IDisposable
         var ownerPath = Path.Combine(Root, "owner.lock");
         RejectLink(ownerPath);
         _owner = new FileStream(ownerPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        try { Recover(); } catch { _owner.Dispose(); throw; }
+        try { Recover(); RecoverArchive(); } catch { _owner.Dispose(); throw; }
     }
 
     public SpoolDiagnostics Diagnostics()
     {
         lock (_gate) return new(_byId.Count, _rejected, _quarantined, _bytes, _capacity,
-            _error is null && _quarantined == 0 && _rejected == 0 && _bytes < _capacity && _fileCount < _maxRecords, _error,
-            _records.Count == 0 ? null : _records.First().Value.CreatedAt);
+            _error is null && _archiveError is null && !_archiveRecoveryFailed && _archiveBacklog.Count == 0 && _quarantined == 0 && _rejected == 0 && _bytes < _capacity && _fileCount < _maxRecords,
+            _archiveError ?? _error ?? (_archiveBacklog.Count > 0 ? "LAP_ARCHIVE_DELIVERY_PENDING" : null),
+            _records.Count == 0 ? null : _records.First().Value.CreatedAt, _archivedLaps, _archiveBytes, _archiveError, _archiveBacklog.Count);
     }
 
     public IReadOnlyList<SpoolEntry> Eligible(ISet<string> excluded, int limit)
-    { lock (_gate) return _records.Values.Where(x => !excluded.Contains(x.MessageId)).Take(limit).ToArray(); }
+    { lock (_gate) { ReplayArchivedLaps(); return _records.Values.Where(x => !excluded.Contains(x.MessageId)).Take(limit).ToArray(); } }
 
     public bool TryPersist(byte[] bytes, out SpoolEntry? entry)
     {
@@ -68,6 +76,7 @@ public sealed class DurableSpool : IDisposable
                 Recover(); _needsRecovery = false;
             }
             if (_byId.TryGetValue(envelope.MessageId, out entry)) return true;
+            if (envelope.MessageType == "lap.completed" && !TryArchiveCompletedLap(bytes)) return false;
             if (_fileCount >= _maxRecords || _bytes + stored.Length > _capacity)
             { Fail("SPOOL_FULL"); return false; }
             var sequence = Math.Max(DateTime.UtcNow.Ticks, _sequence + 1); _sequence = sequence;
@@ -83,6 +92,7 @@ public sealed class DurableSpool : IDisposable
                 SyncDirectory();
                 entry = new(envelope.MessageId, envelope.MessageType, name, stored.Length, envelope.OccurredAt);
                 _records.Add(name, entry); _byId.Add(entry.MessageId, entry); _bytes += stored.Length; _fileCount++;
+                _archiveBacklog.Remove(entry.MessageId);
                 _error = null;
                 return true;
             }
@@ -109,6 +119,8 @@ public sealed class DurableSpool : IDisposable
                 var bytes = DecodeRecord(File.ReadAllBytes(path));
                 var envelope = DurableEventValidation.ValidateFrame(bytes, _instance);
                 if (envelope.MessageId != entry.MessageId) throw new InvalidDataException("RECORD_ID_MISMATCH");
+                // Upgrade legacy pending laps before their first delivery.
+                if (envelope.MessageType == "lap.completed" && !TryArchiveCompletedLap(bytes)) return null;
                 return Encoding.UTF8.GetString(bytes);
             }
             catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidDataException)
@@ -121,6 +133,7 @@ public sealed class DurableSpool : IDisposable
         lock (_gate)
         {
             if (!_byId.TryGetValue(messageId, out var entry)) return false;
+            if (entry.MessageType == "lap.completed" && !SettleLap(entry)) return false;
             _fault?.Invoke("before-retire");
             File.Delete(Path.Combine(Root, entry.FileName));
             _fault?.Invoke("after-retire");
@@ -136,6 +149,7 @@ public sealed class DurableSpool : IDisposable
         lock (_gate)
         {
             if (!_byId.TryGetValue(messageId, out var entry)) return false;
+            if (entry.MessageType == "lap.completed" && !SettleLap(entry)) return false;
             var safeCode = new string(code.Where(c => char.IsAsciiLetterOrDigit(c) || c == '_').Take(64).ToArray());
             if (safeCode.Length == 0) safeCode = "REJECTED";
             File.Move(Path.Combine(Root, entry.FileName), Path.Combine(Root, entry.FileName.Replace(".pending.json", $".rejected-{safeCode}.json")));
@@ -145,6 +159,126 @@ public sealed class DurableSpool : IDisposable
     }
 
     private void RemoveMetadata(SpoolEntry entry) { _records.Remove(entry.FileName); _byId.Remove(entry.MessageId); }
+
+    // A separate, append-only archive is never evicted by ACK, rejection, spool
+    // capacity, or restart. Local-only envelopes deliberately bypass gameplay
+    // validation, preserving observations with no trustworthy session/identity.
+    public bool TryArchiveCompletedLap(byte[] frame)
+    {
+        lock (_gate)
+        {
+            try
+            {
+                var envelope = JsonSerializer.Deserialize<GatewayEnvelope>(frame, TelematicProtocol.JsonOptions)
+                    ?? throw new InvalidDataException("ARCHIVE_INVALID");
+                if (envelope.InstanceId != _instance || envelope.MessageType != "lap.completed" || !DurableEventValidation.IsIdentifier(envelope.MessageId))
+                    throw new InvalidDataException("ARCHIVE_INVALID");
+                RejectLink(ArchiveRoot);
+                var stored = EncodeRecord(frame);
+                var path = Path.Combine(ArchiveRoot, envelope.MessageId + ".json");
+                var temporary = path + ".tmp";
+                RejectLink(path); RejectLink(temporary);
+                if (File.Exists(path))
+                {
+                    if (!File.ReadAllBytes(path).AsSpan().SequenceEqual(stored)) throw new InvalidDataException("ARCHIVE_ID_CONFLICT");
+                    // Also retry directory sync after an uncertain rename.
+                    SyncDirectory(ArchiveRoot); if (!_archiveRecoveryFailed) _archiveError = null; return true;
+                }
+                _fault?.Invoke("archive-before-write");
+                using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+                { stream.Write(stored); stream.Flush(true); _fault?.Invoke("archive-after-flush"); }
+                File.Move(temporary, path);
+                _archivedLaps++; _archiveBytes += stored.Length;
+                if (envelope.Delivery == TelematicProtocol.Durable && !_byId.ContainsKey(envelope.MessageId)) _archiveBacklog.Add(envelope.MessageId);
+                _fault?.Invoke("archive-after-rename");
+                SyncDirectory(ArchiveRoot); SyncDirectory();
+                if (!_archiveRecoveryFailed) _archiveError = null; return true;
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException)
+            {
+                _archiveError = "LAP_ARCHIVE_WRITE_FAILED";
+                Log.Error("Telematic completed lap archive failed {DiagnosticCode}", _archiveError);
+                return false;
+            }
+        }
+    }
+
+    private void RecoverArchive()
+    {
+        SecureDirectory(ArchiveRoot);
+        foreach (var path in Directory.EnumerateFiles(ArchiveRoot).Where(p => p.EndsWith(".json", StringComparison.Ordinal) || p.EndsWith(".json.tmp", StringComparison.Ordinal)))
+        {
+            try
+            {
+                RejectLink(path);
+                if (new FileInfo(path).Length > 128 * 1024) throw new InvalidDataException("ARCHIVE_INVALID");
+                var bytes = DecodeRecord(File.ReadAllBytes(path));
+                var envelope = JsonSerializer.Deserialize<GatewayEnvelope>(bytes, TelematicProtocol.JsonOptions)!;
+                if (envelope.InstanceId != _instance || envelope.MessageType != "lap.completed" || !DurableEventValidation.IsIdentifier(envelope.MessageId))
+                    throw new InvalidDataException("ARCHIVE_INVALID");
+                var final = Path.Combine(ArchiveRoot, envelope.MessageId + ".json");
+                if (path == final + ".tmp" && !File.Exists(final)) { File.Move(path, final); SyncDirectory(ArchiveRoot); }
+                else if (path != final) throw new InvalidDataException("ARCHIVE_INVALID");
+                _archivedLaps++; _archiveBytes += new FileInfo(final).Length;
+                var settled = final + ".settled"; RejectLink(settled);
+                if (File.Exists(settled))
+                {
+                    if (!File.ReadAllBytes(settled).AsSpan().SequenceEqual(File.ReadAllBytes(final)))
+                        throw new InvalidDataException("ARCHIVE_SETTLEMENT_INVALID");
+                }
+                else if (envelope.Delivery == TelematicProtocol.Durable && !_byId.ContainsKey(envelope.MessageId)) _archiveBacklog.Add(envelope.MessageId);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException)
+            {
+                // Preserve damaged/interrupted bytes for operator recovery.
+                _archiveError = "LAP_ARCHIVE_RECOVERY_FAILED";
+                _archiveRecoveryFailed = true;
+            }
+        }
+    }
+
+    private bool SettleLap(SpoolEntry entry)
+    {
+        var frame = Read(entry);
+        if (frame is null) return false;
+        try
+        {
+            var path = Path.Combine(ArchiveRoot, entry.MessageId + ".json.settled");
+            var temporary = path + ".tmp";
+            RejectLink(path); RejectLink(temporary);
+            var stored = EncodeRecord(Encoding.UTF8.GetBytes(frame));
+            if (File.Exists(path))
+            {
+                if (!File.ReadAllBytes(path).AsSpan().SequenceEqual(stored)) throw new InvalidDataException("ARCHIVE_SETTLEMENT_INVALID");
+                SyncDirectory(ArchiveRoot);
+                return true;
+            }
+            _fault?.Invoke("archive-before-settle");
+            using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            { stream.Write(stored); stream.Flush(true); _fault?.Invoke("archive-settle-after-flush"); }
+            File.Move(temporary, path); _fault?.Invoke("archive-settle-after-rename"); SyncDirectory(ArchiveRoot);
+            _archiveBacklog.Remove(entry.MessageId);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+        { _archiveError = "LAP_ARCHIVE_SETTLEMENT_FAILED"; return false; }
+    }
+
+    private void ReplayArchivedLaps()
+    {
+        foreach (var id in _archiveBacklog.ToArray())
+        {
+            if (_byId.ContainsKey(id)) { _archiveBacklog.Remove(id); continue; }
+            if (_fileCount >= _maxRecords || _bytes >= _capacity) { Fail("SPOOL_FULL"); break; }
+            try
+            {
+                var path = Path.Combine(ArchiveRoot, id + ".json"); RejectLink(path);
+                if (!TryPersist(DecodeRecord(File.ReadAllBytes(path)), out _)) break;
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+            { _archiveRecoveryFailed = true; _archiveError = "LAP_ARCHIVE_RECOVERY_FAILED"; break; }
+        }
+    }
     private void Fail(string code)
     {
         if (_error != code) Log.Error("Telematic durability degraded {DiagnosticCode} {Pending} {SpoolBytes} {Capacity}", code, _byId.Count, _bytes, _capacity);
@@ -313,13 +447,13 @@ public sealed class DurableSpool : IDisposable
         finally { LocalFree(descriptor); }
     }
 
-    private void SyncDirectory()
+    private void SyncDirectory(string? directory = null)
     {
         // Unix rename/delete directory entries require fsync. Windows write-through
         // file flush + same-volume rename provide process-crash recovery; power-loss
         // guarantees still depend on the filesystem/storage hardware.
         if (OperatingSystem.IsWindows()) return;
-        var fd = OpenDirectory(Root, 0);
+        var fd = OpenDirectory(directory ?? Root, 0);
         if (fd < 0) throw new IOException("SPOOL_DIRECTORY_OPEN_FAILED");
         try { if (Fsync(fd) != 0) throw new IOException("SPOOL_DIRECTORY_SYNC_FAILED"); }
         finally { CloseDirectory(fd); }

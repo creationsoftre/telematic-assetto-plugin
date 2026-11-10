@@ -13,3 +13,9 @@ across reconnects within the process.
 The normative schemas and reliability/security details live in the Supervisor
 repository at `protocol/game-integration/v1/`. This document intentionally
 does not duplicate those schemas.
+
+## Native clean-lap evidence
+
+See [clean-lap-v1 evidence and retention](clean-lap-v1.md) and the
+[concrete JSON interop fixture](../tests/fixtures/native-clean-lap-v1.json).
+`LapEventPayload.recordValidation` is optional; raw native validity stays UNKNOWN.

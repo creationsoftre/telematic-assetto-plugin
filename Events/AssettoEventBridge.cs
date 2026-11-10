@@ -148,6 +148,8 @@ public sealed class AssettoEventBridge
             _activeSession = null;
             _activeSessionId = null;
             _activeGeneration = null;
+            _recentCollisions.Clear();
+            foreach (var handlers in _handlers.Values) handlers.Continuity = new();
             try
             {
                 var sessionId = Guid.NewGuid().ToString("N");
@@ -180,7 +182,7 @@ public sealed class AssettoEventBridge
             client.Disconnecting += OnClientDisconnecting;
             client.EntryCar.PositionUpdateReceived += position;
             _telemetryCache.Attach(client);
-            _handlers[client] = new ClientHandlers(lap, collision, position);
+            _handlers[client] = new ClientHandlers(lap, collision, position, client.Guid.ToString(), client.SessionId, client.EntryCar);
         }
     }
 
@@ -195,24 +197,42 @@ public sealed class AssettoEventBridge
 
     private void OnLapCompleted(ACTcpClient client, LapCompletedEventArgs args)
     {
-        if (_activeSession is null || _activeSessionId is null) return;
-        // v0.0.54 does not expose sector-split callbacks to plugins.
-        var payload = AssettoEventMappers.Lap(client, _activeSession, _configuration, _activeSessionId, args.Packet, null);
-        var persisted = Queue("lap.completed", payload);
-        Interlocked.Increment(ref _lapCount);
-        _lastLapAt = DateTimeOffset.UtcNow;
-        _lastLapDriver = client.Name;
-        if (persisted) Log.Debug("Telematic lap event persisted for {Driver}", client.Name);
+        lock (_gate)
+        {
+            var now = DateTimeOffset.UtcNow;
+            _handlers.TryGetValue(client, out var handlers);
+            var bound = handlers is not null && IsCurrentPlayer(client) && !client.IsDisconnectRequested
+                && handlers.Identity == client.Guid.ToString() && handlers.Slot == client.SessionId
+                && ReferenceEquals(handlers.Car, client.EntryCar) && args.Packet.SessionId == client.SessionId
+                && _configuration.Extra.UseSteamAuth && _activeSessionId is not null
+                && _activeSession is not null && ReferenceEquals(_sessions.CurrentSession, _activeSession);
+            var continuity = handlers?.Continuity ?? new NativeLapContinuity();
+            var evidence = continuity.Complete(_activeSessionId, client.Guid.ToString(), client.SessionId, bound, args.Packet.Cuts > 0, now);
+            // Preserve observed identities locally, without binding an obsolete or
+            // unauthenticated client to the active authoritative session.
+            var payload = AssettoEventMappers.Lap(client, bound ? _activeSession : null, _configuration,
+                bound ? _activeSessionId : null, args.Packet, null) with
+            { OccurredAt = now.ToString("O"), RecordValidation = CleanLapValidation.Evaluate(args.Packet.LapTime, evidence) };
+            var persisted = _gateway.TryCaptureCompletedLap(payload, bound);
+            Interlocked.Increment(ref _lapCount);
+            _lastLapAt = now; _lastLapDriver = client.Name;
+            if (persisted) Log.Debug("Telematic completed lap retained for {Driver}", client.Name);
+            else Log.Error("Telematic completed lap capture failed; inspect durability health");
+        }
     }
 
     private void OnCollision(ACTcpClient source, CollisionEventArgs args)
     {
+        lock (_gate)
+        {
         var capturedAt = DateTimeOffset.UtcNow;
         var target = args.TargetCar;
         var targetId = target?.SessionId;
-        if (targetId.HasValue && !ShouldEmitCollision(source.SessionId, targetId.Value, args, capturedAt))
+        var key = targetId.HasValue ? CollisionKey(source.SessionId, targetId.Value, args) : null;
+        foreach (var old in _recentCollisions.Where(x => capturedAt - x.Value > TimeSpan.FromSeconds(2)).Select(x => x.Key).ToArray()) _recentCollisions.Remove(old);
+        if (key is not null && _recentCollisions.ContainsKey(key))
         {
-            Log.Debug("Duplicate Telematic collision suppressed for {SourceSessionId}/{TargetSessionId}", source.SessionId, targetId.Value);
+            Log.Debug("Duplicate Telematic collision suppressed for {SourceSessionId}/{TargetSessionId}", source.SessionId, targetId);
             return;
         }
 
@@ -235,21 +255,25 @@ public sealed class AssettoEventBridge
         if (target is not null) metadata["targetCarId"] = target.SessionId.ToString();
         var payload = new CollisionEventPayload(Guid.NewGuid().ToString("N"), _activeSessionId, participants, args.Speed, new WorldPosition(args.Position.X, args.Position.Y, args.Position.Z), capturedAt.ToString("O"), metadata);
         if (Queue(target is null ? "incident.environment_collision" : "incident.car_collision", payload))
+        {
+            if (key is not null) _recentCollisions[key] = capturedAt;
             Log.Debug("Telematic collision event persisted for {Driver}", source.Name);
+        }
+        }
     }
 
-    private bool ShouldEmitCollision(byte sourceSessionId, byte targetSessionId, CollisionEventArgs args, DateTimeOffset capturedAt)
+    private string CollisionKey(byte sourceSessionId, byte targetSessionId, CollisionEventArgs args)
     {
         var first = Math.Min(sourceSessionId, targetSessionId);
         var second = Math.Max(sourceSessionId, targetSessionId);
-        var key = $"{first}:{second}:{MathF.Round(args.Position.X / 5)}:{MathF.Round(args.Position.Y / 5)}:{MathF.Round(args.Position.Z / 5)}:{MathF.Round(args.Speed / 5)}";
-        lock (_gate)
+        // Include connection identity and native session so a reused slot cannot
+        // inherit a previous occupant's suppression window.
+        string? ConnectionToken(byte slot)
         {
-            foreach (var old in _recentCollisions.Where(x => capturedAt - x.Value > TimeSpan.FromSeconds(2)).Select(x => x.Key).ToArray()) _recentCollisions.Remove(old);
-            if (_recentCollisions.ContainsKey(key)) return false;
-            _recentCollisions[key] = capturedAt;
-            return true;
+            var client = _cars.EntryCars.FirstOrDefault(c => c.SessionId == slot)?.Client;
+            return client is not null && _handlers.TryGetValue(client, out var handlers) ? handlers.ConnectionId : null;
         }
+        return $"{_activeSessionId}:{first}:{second}:{ConnectionToken(first)}:{ConnectionToken(second)}:{MathF.Round(args.Position.X / 5)}:{MathF.Round(args.Position.Y / 5)}:{MathF.Round(args.Position.Z / 5)}:{MathF.Round(args.Speed / 5)}";
     }
 
     private bool Queue(string messageType, object payload)
@@ -259,7 +283,13 @@ public sealed class AssettoEventBridge
         return false;
     }
 
-    private sealed record ClientHandlers(EventHandler<ACTcpClient, LapCompletedEventArgs> Lap, EventHandler<ACTcpClient, CollisionEventArgs> Collision, EventHandlerIn<EntryCar, PositionUpdateIn> Position);
+    private sealed record ClientHandlers(EventHandler<ACTcpClient, LapCompletedEventArgs> Lap, EventHandler<ACTcpClient, CollisionEventArgs> Collision, EventHandlerIn<EntryCar, PositionUpdateIn> Position, string Identity, byte Slot, EntryCar Car)
+    {
+        public NativeLapContinuity Continuity { get; set; } = new();
+        public string ConnectionId { get; } = Guid.NewGuid().ToString("N");
+    }
 }
 
-public sealed record EventDiagnosticsSnapshot(long CompletedLaps, DateTimeOffset? LastLapAt, string? LastLapDriver, string? SessionId);
+public sealed record EventDiagnosticsSnapshot(long CompletedLaps, DateTimeOffset? LastLapAt, string? LastLapDriver, string? SessionId,
+    bool NativeCleanLapCoverageAvailable = false,
+    string NativeCleanLapCoverageGap = "COLLISION_TIMESTAMP_AND_DELIVERY_WATERMARK_UNAVAILABLE");

@@ -27,7 +27,7 @@ public sealed record SessionEventPayload(
 
 public sealed record LapEventPayload(
     string EventId,
-    string SessionId,
+    string? SessionId,
     DriverReference Driver,
     string TrackKey,
     string? LayoutKey,
@@ -38,7 +38,13 @@ public sealed record LapEventPayload(
     IReadOnlyList<long>? SectorTimesMs,
     string? Tyre,
     string OccurredAt,
-    IReadOnlyDictionary<string, object?>? GameMetadata = null);
+    IReadOnlyDictionary<string, object?>? GameMetadata = null,
+    RecordValidation? RecordValidation = null);
+
+public sealed record RecordValidation(string PolicyVersion, bool Accepted, string Reason, CleanLapEvidence Evidence);
+
+public sealed record CleanLapEvidence(string Source, bool CoverageComplete, bool IdentityMatched,
+    bool TimingCut, bool Collision, string IntervalStart, string IntervalEnd);
 
 public sealed record PlayersSnapshotPayload(
     string CapturedAt,

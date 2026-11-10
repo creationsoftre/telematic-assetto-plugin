@@ -1,0 +1,41 @@
+{
+  "protocolVersion": 1,
+  "messageId": "native-clean-lap-v1-interop",
+  "messageType": "lap.completed",
+  "instanceId": "native-fixture",
+  "occurredAt": "2026-11-09T22:01:40.0000000+00:00",
+  "sentAt": "2026-11-09T22:01:40.0000000+00:00",
+  "delivery": "durable",
+  "payload": {
+    "eventId": "native-lap-interop",
+    "sessionId": "native-session-interop",
+    "driver": {
+      "displayName": "Interop Fixture",
+      "steamId": "76561198000000000",
+      "gameDriverId": "0",
+      "carCode": "ks_bmw_m235i_racing",
+      "gameMetadata": { "steamAuthEnabled": true, "identityVerified": true }
+    },
+    "trackKey": "ks_laguna_seca",
+    "lapTimeMs": 100000,
+    "lapNumber": 2,
+    "cuts": 0,
+    "validity": "UNKNOWN",
+    "occurredAt": "2026-11-09T22:01:40.0000000+00:00",
+    "gameMetadata": { "validitySource": "assetto_server_cuts_preserved" },
+    "recordValidation": {
+      "policyVersion": "clean-lap-v1",
+      "accepted": false,
+      "reason": "TELEMETRY_INCOMPLETE",
+      "evidence": {
+        "source": "ASSETTO_SERVER_NATIVE",
+        "coverageComplete": false,
+        "identityMatched": true,
+        "timingCut": false,
+        "collision": false,
+        "intervalStart": "2026-11-09T22:00:00.0000000+00:00",
+        "intervalEnd": "2026-11-09T22:01:40.0000000+00:00"
+      }
+    }
+  }
+}

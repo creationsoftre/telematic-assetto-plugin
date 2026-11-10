@@ -234,11 +234,12 @@ public sealed class DeliveryReliabilityTests
     {
         using var f = new Fixture(); var c = f.Config(records: 1); using var spool = new DurableSpool(c.InstanceId, c.Spool);
         var first = DurableEventValidation.Serialize(c.InstanceId, "first", "lap.completed", Lap());
-        Assert.True(spool.TryPersist(first, out var e)); Assert.False(spool.TryPersist(DurableEventValidation.Serialize(c.InstanceId, "second", "lap.completed", Lap()), out _));
+        var second = DurableEventValidation.Serialize(c.InstanceId, "second", "lap.completed", Lap());
+        Assert.True(spool.TryPersist(first, out var e)); Assert.False(spool.TryPersist(second, out _));
         Assert.Equal("first", spool.Eligible(new HashSet<string>(), 10).Single().MessageId);
         Assert.Equal("SPOOL_FULL", spool.Diagnostics().ErrorCode);
         Assert.True(spool.Retire(e!.MessageId)); Assert.False(spool.Retire(e.MessageId));
-        Assert.True(spool.TryPersist(DurableEventValidation.Serialize(c.InstanceId, "second", "lap.completed", Lap()), out _));
+        Assert.True(spool.TryPersist(second, out _));
     }
 
     [Fact]
