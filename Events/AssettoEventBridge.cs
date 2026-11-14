@@ -22,6 +22,7 @@ public sealed class AssettoEventBridge
     private NativeGeneration? _activeGeneration;
     private int _started;
     private long _lapCount;
+    private long _localOnlyLapCount;
     private DateTimeOffset? _lastLapAt;
     private string? _lastLapDriver;
     private DateTimeOffset _lastPlayerSnapshotAt;
@@ -29,7 +30,8 @@ public sealed class AssettoEventBridge
     public string? CurrentSessionId => _activeSessionId;
 
     public EventDiagnosticsSnapshot Diagnostics()
-        => new(Interlocked.Read(ref _lapCount), _lastLapAt, _lastLapDriver, _activeSessionId);
+        => new(Interlocked.Read(ref _lapCount), _lastLapAt, _lastLapDriver, _activeSessionId,
+            LocalOnlyLaps: Interlocked.Read(ref _localOnlyLapCount));
 
     public AssettoEventBridge(EntryCarManager cars, SessionManager sessions, ACServerConfiguration configuration, TelematicGatewayClient gateway, VehicleStateCache telemetryCache)
     { _cars = cars; _sessions = sessions; _configuration = configuration; _gateway = gateway; _telemetryCache = telemetryCache; }
@@ -204,19 +206,30 @@ public sealed class AssettoEventBridge
             var bound = handlers is not null && IsCurrentPlayer(client) && !client.IsDisconnectRequested
                 && handlers.Identity == client.Guid.ToString() && handlers.Slot == client.SessionId
                 && ReferenceEquals(handlers.Car, client.EntryCar) && args.Packet.SessionId == client.SessionId
-                && _configuration.Extra.UseSteamAuth && _activeSessionId is not null
+                && _activeSessionId is not null
                 && _activeSession is not null && ReferenceEquals(_sessions.CurrentSession, _activeSession);
             var continuity = handlers?.Continuity ?? new NativeLapContinuity();
-            var evidence = continuity.Complete(_activeSessionId, client.Guid.ToString(), client.SessionId, bound, args.Packet.Cuts > 0, now);
-            // Preserve observed identities locally, without binding an obsolete or
-            // unauthenticated client to the active authoritative session.
+            // Routing an observed completion is independent of Steam ticket
+            // authentication. Preserve it in the bound native session even
+            // when the server deliberately runs without Steam authentication;
+            // its identity/evidence must still remain explicitly unverified.
+            var evidence = continuity.Complete(_activeSessionId, client.Guid.ToString(), client.SessionId,
+                bound && _configuration.Extra.UseSteamAuth, args.Packet.Cuts > 0, now);
+            // Obsolete clients and wrong native slots remain local-only; lack of
+            // Steam ticket authentication does not invalidate session routing.
             var payload = AssettoEventMappers.Lap(client, bound ? _activeSession : null, _configuration,
                 bound ? _activeSessionId : null, args.Packet, null) with
-            { OccurredAt = now.ToString("O"), RecordValidation = CleanLapValidation.Evaluate(args.Packet.LapTime, evidence) };
+            { OccurredAt = now.ToString("O"), Validity = args.Packet.Cuts > 0 ? "INVALID" : "UNKNOWN",
+                RecordValidation = CleanLapValidation.Evaluate(args.Packet.LapTime, evidence) };
             var persisted = _gateway.TryCaptureCompletedLap(payload, bound);
             Interlocked.Increment(ref _lapCount);
             _lastLapAt = now; _lastLapDriver = client.Name;
-            if (persisted) Log.Debug("Telematic completed lap retained for {Driver}", client.Name);
+            if (persisted && !bound)
+            {
+                Interlocked.Increment(ref _localOnlyLapCount);
+                Log.Warning("Telematic completed lap archived locally but not uploaded: current native session/player routing could not be established");
+            }
+            else if (persisted) Log.Debug("Telematic completed lap retained for {Driver}", client.Name);
             else Log.Error("Telematic completed lap capture failed; inspect durability health");
         }
     }
@@ -292,4 +305,5 @@ public sealed class AssettoEventBridge
 
 public sealed record EventDiagnosticsSnapshot(long CompletedLaps, DateTimeOffset? LastLapAt, string? LastLapDriver, string? SessionId,
     bool NativeCleanLapCoverageAvailable = false,
-    string NativeCleanLapCoverageGap = "COLLISION_TIMESTAMP_AND_DELIVERY_WATERMARK_UNAVAILABLE");
+    string NativeCleanLapCoverageGap = "COLLISION_TIMESTAMP_AND_DELIVERY_WATERMARK_UNAVAILABLE",
+    long LocalOnlyLaps = 0);

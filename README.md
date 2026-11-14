@@ -15,6 +15,15 @@ need to be checked on an actual v0.0.54 server before production rollout.
 
 ## Configure and install
 
+`UseSteamAuth: false` is supported for lap delivery. A current connected player,
+matching packet slot, and current native session are still required. Such laps
+retain `identityVerified: false`; delivery does not assert Steam authentication
+or strict clean-lap acceptance. Positive cut counts are stored as invalid.
+Missing native routing retains the completion in the local archive, emits a
+warning, and increments diagnostics `events.localOnlyLaps` (since plugin start).
+Do not replay old local-only archives into a guessed session: older entries may
+not contain a session identifier.
+
 Build against a local checkout of the v0.0.54 tag:
 
 ```powershell
