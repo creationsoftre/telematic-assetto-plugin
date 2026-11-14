@@ -114,14 +114,14 @@ public sealed class CleanLapEvidenceTests
     [Theory]
     [InlineData(0, "TELEMETRY_INCOMPLETE")]
     [InlineData(1, "TIMING_CUT")]
-    public void RealNativeCallbacksPreserveRawUnknownAndEndEqualsOccurredAt(byte cuts, string reason)
+    public void RealNativeCallbacksPreserveObservedCutsAndEndEqualsOccurredAt(byte cuts, string reason)
     {
         using var f = new Fixture(); var client = f.Join(); f.Lap(client, cuts); f.Lap(client, cuts);
         Assert.Equal(2, f.Archive.Length);
         foreach (var lap in f.Archive)
         {
             var p = lap.Payload; var v = p.GetProperty("recordValidation");
-            Assert.Equal("UNKNOWN", p.GetProperty("validity").GetString()); Assert.Equal(cuts, p.GetProperty("cuts").GetByte());
+            Assert.Equal(cuts > 0 ? "INVALID" : "UNKNOWN", p.GetProperty("validity").GetString()); Assert.Equal(cuts, p.GetProperty("cuts").GetByte());
             Assert.Equal(reason, v.GetProperty("reason").GetString()); Assert.False(v.GetProperty("accepted").GetBoolean());
             Assert.Equal(p.GetProperty("occurredAt").GetString(), v.GetProperty("evidence").GetProperty("intervalEnd").GetString());
             Assert.False(v.GetProperty("evidence").GetProperty("coverageComplete").GetBoolean());
@@ -130,15 +130,32 @@ public sealed class CleanLapEvidenceTests
 
     [Theory]
     [InlineData(false, true, false)]
-    [InlineData(true, false, false)]
     [InlineData(true, true, true)]
-    public void MissingSessionUnauthenticatedOrWrongPacketSlotAreArchivedLocally(bool session, bool auth, bool wrongSlot)
+    public void MissingSessionOrWrongPacketSlotAreArchivedLocally(bool session, bool auth, bool wrongSlot)
     {
         using var f = new Fixture(session, auth); var client = f.Join(); f.Lap(client, packetSlot: wrongSlot ? (byte)1 : (byte)0);
         var lap = Assert.Single(f.Archive);
         Assert.Equal("local-only", lap.Delivery); Assert.False(lap.Payload.TryGetProperty("sessionId", out _));
         Assert.Equal("IDENTITY_UNBOUND", lap.Payload.GetProperty("recordValidation").GetProperty("reason").GetString());
         Assert.DoesNotContain(f.Spool.Eligible(new HashSet<string>(), 100), e => e.MessageType == "lap.completed");
+        Assert.Equal(1, f.Bridge.Diagnostics().LocalOnlyLaps);
+    }
+
+    [Theory]
+    [InlineData((byte)0)]
+    [InlineData((byte)1)]
+    public void SteamAuthenticationDisabledRetainsAndDeliversCompletionWithoutAssertingVerifiedIdentity(byte cuts)
+    {
+        using var f = new Fixture(auth: false); var client = f.Join(); f.Lap(client, cuts);
+        var lap = Assert.Single(f.Archive);
+        Assert.Equal(TelematicProtocol.Durable, lap.Delivery);
+        Assert.Equal(f.Bridge.CurrentSessionId, lap.Payload.GetProperty("sessionId").GetString());
+        Assert.Equal(cuts > 0 ? "INVALID" : "UNKNOWN", lap.Payload.GetProperty("validity").GetString());
+        Assert.False(lap.Payload.GetProperty("driver").GetProperty("gameMetadata").GetProperty("identityVerified").GetBoolean());
+        Assert.Equal("IDENTITY_UNBOUND", lap.Payload.GetProperty("recordValidation").GetProperty("reason").GetString());
+        Assert.False(lap.Payload.GetProperty("recordValidation").GetProperty("accepted").GetBoolean());
+        Assert.Single(f.Spool.Eligible(new HashSet<string>(), 100), e => e.MessageType == "lap.completed");
+        Assert.Equal(0, f.Bridge.Diagnostics().LocalOnlyLaps);
     }
 
     [Fact]
